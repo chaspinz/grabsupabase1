@@ -20,16 +20,17 @@ const todayStr = () => new Date().toISOString().split("T")[0];
 const DAYS_ID = ["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
 const MONTHS_ID = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
 const KAT_COLOR = { Operasional:"#f59e0b", Maintenance:"#ef4444", Cicilan:"#8b5cf6" };
+const KAT_PI_COLOR = { "Grab Car":"#0ea5e9", "Grab Food":"#16a34a", "Rental":"#8b5cf6", "Lainnya":"#f59e0b" };
 const fmtInput = (v) => { const n=String(v).replace(/\D/g,""); return n?new Intl.NumberFormat("id-ID").format(n):""; };
 
 // ─── Sample data untuk preview saat belum ada data ────────────────
 const SAMPLE_PI = [
-  {id:"s1",tanggal:"2025-05-03",uraian:"GrabCar pagi Sabtu",jumlah:185000},
-  {id:"s2",tanggal:"2025-05-10",uraian:"GrabFood Sabtu siang",jumlah:210000},
-  {id:"s3",tanggal:"2025-05-17",uraian:"GrabCar Sabtu penuh",jumlah:320000},
-  {id:"s4",tanggal:"2025-06-07",uraian:"GrabCar Sabtu",jumlah:290000},
-  {id:"s5",tanggal:"2025-06-14",uraian:"GrabFood Sabtu",jumlah:200000},
-  {id:"s6",tanggal:"2025-06-21",uraian:"GrabCar Sabtu malam",jumlah:270000},
+  {id:"s1",tanggal:"2025-05-03",kategori:"Grab Car",uraian:"GrabCar pagi Sabtu",jumlah:185000},
+  {id:"s2",tanggal:"2025-05-10",kategori:"Grab Food",uraian:"GrabFood Sabtu siang",jumlah:210000},
+  {id:"s3",tanggal:"2025-05-17",kategori:"Grab Car",uraian:"GrabCar Sabtu penuh",jumlah:320000},
+  {id:"s4",tanggal:"2025-06-07",kategori:"Rental",uraian:"GrabCar Sabtu",jumlah:290000},
+  {id:"s5",tanggal:"2025-06-14",kategori:"Grab Food",uraian:"GrabFood Sabtu",jumlah:200000},
+  {id:"s6",tanggal:"2025-06-21",kategori:"Lainnya",uraian:"GrabCar Sabtu malam",jumlah:270000},
 ];
 const SAMPLE_PO = [
   {id:"t1",tanggal:"2025-05-05",kategori:"Operasional",uraian:"BBM Pertamax",jumlah:80000},
@@ -49,9 +50,11 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [filterPeriod, setFilterPeriod] = useState("bulan");
   const [filterDate, setFilterDate] = useState(todayStr().slice(0,7));
-  const [fI, setFI] = useState({tanggal:todayStr(),uraian:"",jumlah:""});
+  const [fI, setFI] = useState({tanggal:todayStr(),kategori:"Grab Car",uraian:"",jumlah:""});
   const [fE, setFE] = useState({tanggal:todayStr(),kategori:"Operasional",uraian:"",jumlah:""});
   const [online, setOnline] = useState(navigator.onLine);
+  const [hariLibur, setHariLibur] = useState([]);
+  const [fHL, setFHL] = useState({tanggal:todayStr(),keterangan:""});
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isSample, setIsSample] = useState(false);
   const toastRef = useRef(null);
@@ -83,9 +86,10 @@ export default function App() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: piData, error: e1 }, { data: poData, error: e2 }] = await Promise.all([
+      const [{ data: piData, error: e1 }, { data: poData, error: e2 }, { data: hlData, error: e3 }] = await Promise.all([
         supabase.from('pemasukan').select('*').order('tanggal', { ascending: false }),
-        supabase.from('pengeluaran').select('*').order('tanggal', { ascending: false })
+        supabase.from('pengeluaran').select('*').order('tanggal', { ascending: false }),
+        supabase.from('hari_libur').select('*').order('tanggal', { ascending: false })
       ]);
       if(e1||e2) throw new Error(e1?.message || e2?.message);
       if(piData.length===0 && poData.length===0) {
@@ -93,6 +97,7 @@ export default function App() {
       } else {
         setPi(piData||[]); setPo(poData||[]); setIsSample(false);
       }
+      setHariLibur(hlData||[]);
     } catch(err) {
       setPi(SAMPLE_PI); setPo(SAMPLE_PO); setIsSample(true);
       showToast("⚠️ Cek koneksi Supabase","warn");
@@ -108,6 +113,7 @@ export default function App() {
       .channel('grabfinance-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pemasukan' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pengeluaran' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hari_libur' }, () => loadData())
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [loadData]);
@@ -120,13 +126,14 @@ export default function App() {
     setSaving(true);
     const payload = {
       tanggal: fI.tanggal,
+      kategori: fI.kategori,
       uraian: fI.uraian.trim(),
       jumlah: parseFloat(String(fI.jumlah).replace(/\D/g,""))
     };
     try {
       const { error } = await supabase.from('pemasukan').insert([payload]);
       if(error) throw error;
-      setFI({tanggal:todayStr(),uraian:"",jumlah:""});
+      setFI({tanggal:todayStr(),kategori:"Grab Car",uraian:"",jumlah:""});
       showToast("✅ Pemasukan disimpan!");
       await loadData();
     } catch(err) {
@@ -177,6 +184,36 @@ export default function App() {
     else showToast("🗑️ Data dihapus");
   };
 
+  // ─ Hari Libur ─────────────────────────────────────────────────
+  const submitHariLibur = async () => {
+    if(!fHL.tanggal) return showToast("Pilih tanggal dulu ⚠️","warn");
+    if(savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('hari_libur').upsert([{
+        tanggal: fHL.tanggal,
+        keterangan: fHL.keterangan.trim() || "Libur / Tidak narik"
+      }], { onConflict: 'tanggal' });
+      if(error) throw error;
+      setFHL({tanggal:todayStr(),keterangan:""});
+      showToast("✅ Hari libur disimpan!");
+      await loadData();
+    } catch(err) {
+      showToast("❌ Gagal: "+err.message,"error");
+    }
+    setSaving(false);
+    savingRef.current = false;
+  };
+
+  const delHL = async (id) => {
+    if(!confirm("Hapus hari libur ini?")) return;
+    setHariLibur(prev=>prev.filter(x=>x.id!==id));
+    const { error } = await supabase.from('hari_libur').delete().eq('id', id);
+    if(error) { showToast("❌ Gagal hapus","error"); await loadData(); }
+    else showToast("🗑️ Hari libur dihapus");
+  };
+
   // ─ Install PWA ────────────────────────────────────────────────
   const installPWA = async () => {
     if(!installPrompt) return;
@@ -212,11 +249,26 @@ export default function App() {
     return Object.entries(m).map(([name,value])=>({name,value}));
   },[po]);
 
+  const incPie = useMemo(()=>{
+    const m={};
+    pi.forEach(x=>{const k=x.kategori||"Grab Car"; m[k]=(m[k]||0)+(parseFloat(x.jumlah)||0);});
+    return Object.entries(m).map(([name,value])=>({name,value}));
+  },[pi]);
+
+  const hariLiburSet = useMemo(()=>new Set(hariLibur.map(h=>h.tanggal)),[hariLibur]);
+
   const dayPred = useMemo(()=>{
     const m=Array(7).fill(0).map((_,i)=>({day:DAYS_ID[i],total:0,count:0}));
-    pi.forEach(x=>{ const d=new Date(x.tanggal); if(isNaN(d))return; m[d.getDay()].total+=parseFloat(x.jumlah)||0; m[d.getDay()].count+=1; });
+    pi.forEach(x=>{
+      // Abaikan hari libur
+      if(hariLiburSet.has(x.tanggal)) return;
+      const d=new Date(x.tanggal);
+      if(isNaN(d))return;
+      m[d.getDay()].total+=parseFloat(x.jumlah)||0;
+      m[d.getDay()].count+=1;
+    });
     return m.map(d=>({...d,avg:d.count?Math.round(d.total/d.count):0})).sort((a,b)=>b.avg-a.avg);
-  },[pi]);
+  },[pi,hariLiburSet]);
 
   const filtered = useMemo(()=>{
     let pI=pi, pO=po;
@@ -243,6 +295,7 @@ export default function App() {
     {id:"pengeluaran",label:"Pengeluaran",em:"💸"},
     {id:"laporan",label:"Laporan",em:"📋"},
     {id:"analitik",label:"Analitik",em:"📊"},
+    {id:"libur",label:"Hari Libur",em:"🏖️"},
   ];
 
   const TT = {formatter:(v)=>fmt(v), contentStyle:{background:"#fff",border:"1px solid #e2e8f0",borderRadius:8,fontSize:11}};
@@ -386,15 +439,30 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
                 <div className="card" style={{padding:18}}>
-                  <div style={{fontSize:11,fontWeight:700,color:"#94a3b8",letterSpacing:1,marginBottom:12}}>KATEGORI PENGELUARAN</div>
-                  <ResponsiveContainer width="100%" height={190}>
-                    <PieChart>
-                      <Pie data={expPie} cx="50%" cy="50%" innerRadius={45} outerRadius={72} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={10}>
-                        {expPie.map((e,i)=><Cell key={i} fill={KAT_COLOR[e.name]||"#0ea5e9"}/>)}
-                      </Pie>
-                      <Tooltip {...TT}/>
-                    </PieChart>
-                  </ResponsiveContainer>
+                  <div style={{fontSize:11,fontWeight:700,color:"#94a3b8",letterSpacing:1,marginBottom:8}}>KATEGORI PEMASUKAN & PENGELUARAN</div>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    {["Pemasukan","Pengeluaran"].map((l,li)=>(
+                      <div key={li} style={{fontSize:10,fontWeight:700,color:li===0?"#16a34a":"#dc2626",background:li===0?"#f0fdf4":"#fff1f2",padding:"3px 10px",borderRadius:6,border:`1px solid ${li===0?"#bbf7d0":"#fecdd3"}`}}>{l}</div>
+                    ))}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <PieChart>
+                        <Pie data={incPie} cx="50%" cy="50%" innerRadius={30} outerRadius={60} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>
+                          {incPie.map((e,i)=><Cell key={i} fill={KAT_PI_COLOR[e.name]||"#0ea5e9"}/>)}
+                        </Pie>
+                        <Tooltip {...TT}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <PieChart>
+                        <Pie data={expPie} cx="50%" cy="50%" innerRadius={30} outerRadius={60} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>
+                          {expPie.map((e,i)=><Cell key={i} fill={KAT_COLOR[e.name]||"#0ea5e9"}/>)}
+                        </Pie>
+                        <Tooltip {...TT}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
               </div>
 
@@ -435,6 +503,15 @@ export default function App() {
                       <input type="date" className="inp" value={fI.tanggal} onChange={e=>setFI({...fI,tanggal:e.target.value})}/>
                     </div>
                     <div>
+                      <label style={{fontSize:10,color:"#94a3b8",display:"block",marginBottom:5,fontWeight:700,letterSpacing:.5}}>KATEGORI</label>
+                      <select className="inp" value={fI.kategori} onChange={e=>setFI({...fI,kategori:e.target.value})}>
+                        <option>Grab Car</option>
+                        <option>Grab Food</option>
+                        <option>Rental</option>
+                        <option>Lainnya</option>
+                      </select>
+                    </div>
+                    <div>
                       <label style={{fontSize:10,color:"#94a3b8",display:"block",marginBottom:5,fontWeight:700,letterSpacing:.5}}>URAIAN</label>
                       <input type="text" className="inp" placeholder="Contoh: GrabCar pagi, GrabFood..." value={fI.uraian} onChange={e=>setFI({...fI,uraian:e.target.value})} onKeyDown={e=>e.key==="Enter"&&!saving&&submitIncome()}/>
                     </div>
@@ -457,12 +534,13 @@ export default function App() {
                   <div style={{overflowX:"auto"}}>
                     <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                       <thead><tr style={{borderBottom:"2px solid #f1f5f9"}}>
-                        {["Tanggal","Uraian","Jumlah",""].map(h=><th key={h} style={{textAlign:"left",padding:"6px 10px",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:.5}}>{h}</th>)}
+                        {["Tanggal","Kategori","Uraian","Jumlah",""].map(h=><th key={h} style={{textAlign:"left",padding:"6px 10px",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:.5}}>{h}</th>)}
                       </tr></thead>
                       <tbody>
                         {pi.map(x=>(
                           <tr key={x.id} className="tr">
                             <td style={{padding:"9px 10px",color:"#94a3b8",fontSize:11,whiteSpace:"nowrap"}}>{x.tanggal}</td>
+                            <td style={{padding:"9px 10px"}}><span className="badge" style={{background:`${KAT_PI_COLOR[x.kategori]||"#0ea5e9"}18`,color:KAT_PI_COLOR[x.kategori]||"#0ea5e9"}}>{x.kategori||"Grab Car"}</span></td>
                             <td style={{padding:"9px 10px",fontWeight:500}}>{x.uraian}</td>
                             <td style={{padding:"9px 10px",fontFamily:"'JetBrains Mono',monospace",color:"#16a34a",fontWeight:700,whiteSpace:"nowrap"}}>{fmt(x.jumlah)}</td>
                             <td style={{padding:"9px 10px"}}>
@@ -669,6 +747,106 @@ export default function App() {
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+
+          {/* ══ HARI LIBUR ════════════════════════════════════════ */}
+          {tab==="libur"&&(
+            <div>
+              <div style={{marginBottom:18}}>
+                <h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>🏖️ Hari Libur / Tidak Narik</h1>
+                <p style={{color:"#94a3b8",fontSize:12,marginTop:2}}>Tandai hari libur agar tidak mempengaruhi prediksi hari ramai</p>
+              </div>
+
+              {/* Info box */}
+              <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:12,padding:"12px 16px",marginBottom:18,display:"flex",gap:10,alignItems:"flex-start"}}>
+                <span style={{fontSize:18}}>💡</span>
+                <div style={{fontSize:12,color:"#1d4ed8",lineHeight:1.6}}>
+                  Hari yang ditandai libur <strong>tidak akan dihitung</strong> dalam prediksi hari ramai. Contoh: libur lebaran, sakit, keperluan keluarga, dll.
+                </div>
+              </div>
+
+              <div className="g32" style={{display:"grid",gridTemplateColumns:"340px 1fr",gap:18}}>
+                {/* Form */}
+                <div className="card" style={{padding:20,alignSelf:"start"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#0284c7",letterSpacing:1,marginBottom:16}}>TANDAI HARI LIBUR</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                    <div>
+                      <label style={{fontSize:10,color:"#94a3b8",display:"block",marginBottom:5,fontWeight:700,letterSpacing:.5}}>TANGGAL LIBUR</label>
+                      <input type="date" className="inp" value={fHL.tanggal} onChange={e=>setFHL({...fHL,tanggal:e.target.value})}/>
+                    </div>
+                    <div>
+                      <label style={{fontSize:10,color:"#94a3b8",display:"block",marginBottom:5,fontWeight:700,letterSpacing:.5}}>KETERANGAN</label>
+                      <input type="text" className="inp" placeholder="Contoh: Lebaran, Sakit, Urusan keluarga..." value={fHL.keterangan} onChange={e=>setFHL({...fHL,keterangan:e.target.value})} onKeyDown={e=>e.key==="Enter"&&!saving&&submitHariLibur()}/>
+                    </div>
+                    <button className="btn" disabled={saving} onClick={submitHariLibur} style={{padding:"12px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",color:"#fff",marginTop:4}}>
+                      {saving?"⏳ Menyimpan...":"+ Tandai Hari Libur"}
+                    </button>
+                  </div>
+                  <div style={{marginTop:16,padding:12,background:"#f0fdf4",borderRadius:10,border:"1px solid #bbf7d0"}}>
+                    <div style={{fontSize:10,color:"#16a34a",fontWeight:700,marginBottom:4}}>TOTAL HARI LIBUR</div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:24,fontWeight:800,color:"#16a34a"}}>{hariLibur.length}</div>
+                    <div style={{fontSize:10,color:"#94a3b8",marginTop:2}}>hari tidak narik</div>
+                  </div>
+                </div>
+
+                {/* Tabel riwayat */}
+                <div className="card" style={{padding:20}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:1,marginBottom:14}}>DAFTAR HARI LIBUR ({hariLibur.length})</div>
+                  {hariLibur.length===0?(
+                    <div style={{textAlign:"center",padding:40,color:"#94a3b8",fontSize:13}}>
+                      <div style={{fontSize:40,marginBottom:10}}>🏖️</div>
+                      Belum ada hari libur ditandai
+                    </div>
+                  ):(
+                    <div style={{overflowX:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                        <thead><tr style={{borderBottom:"2px solid #f1f5f9"}}>
+                          {["Tanggal","Hari","Keterangan",""].map(h=><th key={h} style={{textAlign:"left",padding:"6px 10px",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:.5}}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {hariLibur.map(x=>{
+                            const d = new Date(x.tanggal);
+                            const namaHari = DAYS_ID[d.getDay()];
+                            return (
+                              <tr key={x.id} className="tr">
+                                <td style={{padding:"9px 10px",color:"#94a3b8",fontSize:11,whiteSpace:"nowrap"}}>{x.tanggal}</td>
+                                <td style={{padding:"9px 10px"}}>
+                                  <span className="badge" style={{background:"#eff6ff",color:"#1d4ed8"}}>{namaHari}</span>
+                                </td>
+                                <td style={{padding:"9px 10px",fontWeight:500}}>{x.keterangan||"Libur / Tidak narik"}</td>
+                                <td style={{padding:"9px 10px"}}>
+                                  <button onClick={()=>delHL(x.id)} style={{background:"#fff1f2",border:"1px solid #fecdd3",color:"#dc2626",padding:"3px 9px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Hapus</button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Statistik hari libur */}
+              {hariLibur.length>0&&(
+                <div className="card" style={{padding:20,marginTop:16}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#94a3b8",letterSpacing:1,marginBottom:14}}>DISTRIBUSI HARI LIBUR PER HARI</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8}}>
+                    {DAYS_ID.map((day,i)=>{
+                      const count = hariLibur.filter(h=>new Date(h.tanggal).getDay()===i).length;
+                      return (
+                        <div key={i} style={{textAlign:"center",padding:"12px 4px",borderRadius:10,background:count>0?"#fff1f2":"#f8fafc",border:`1px solid ${count>0?"#fecdd3":"#e2e8f0"}`}}>
+                          <div style={{fontSize:10,fontWeight:700,color:count>0?"#dc2626":"#94a3b8"}}>{day}</div>
+                          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:18,fontWeight:800,color:count>0?"#dc2626":"#cbd5e1",marginTop:4}}>{count}</div>
+                          <div style={{fontSize:9,color:"#94a3b8",marginTop:2}}>hari</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
